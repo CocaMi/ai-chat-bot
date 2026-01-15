@@ -1,114 +1,122 @@
 import { useChatStore } from '@/lib/store';
 
-let controller: AbortController | null = null;
-let readerAbort = false;
+type StreamClientOptions = {
+  conversationId: string;
+  message: string;
+  signal?: AbortSignal;
+};
 
-export function abortStream() {
-  if (controller) {
-    controller.abort();
-    controller = null;
-    readerAbort = true;
-  }
-}
+type SSEEvent =
+  | { type: 'content_chunk'; content: string }
+  | { type: 'completed' }
+  | { type: 'done' }
+  | { type: 'thinking' }
+  | { type: 'status'; status: string }
+  | { type: 'processing_error'; error: string }
+  | { type: 'timeout_error'; error: string }
+  | { type: 'network_error'; error: string }
+  | { type: 'validation_error'; error: string };
 
-export async function startStream(url: string, init?: RequestInit) {
-  // ensure previous is aborted
-  abortStream();
+const API_BASE_URL = 'https://test-mock-api-opal.vercel.app';
 
-  controller = new AbortController();
-  readerAbort = false;
+export async function streamAssistantMessage({
+  conversationId,
+  message,
+  signal,
+}: StreamClientOptions): Promise<void> {
+  const {
+    startAgentMessage,
+    appendStreamingChunk,
+    endStreaming,
+    setStreamingError,
+  } = useChatStore.getState();
 
-  const signal = controller.signal;
-  const state = useChatStore.getState();
+  // Create empty assistant message first
+  const agentMessageId = startAgentMessage(conversationId);
+
+  let buffer = '';
 
   try {
-    // signal streaming start
-    state.startStreaming();
+    const response = await fetch(
+      `${API_BASE_URL}/conversations/${conversationId}/messages/stream`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ content: message }),
+        signal,
+      }
+    );
 
-    const res = await fetch(url, { ...init, signal });
-    if (!res.body) throw new Error('No response body');
+    if (!response.ok || !response.body) {
+      throw new Error('Streaming request failed');
+    }
 
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
 
     while (true) {
-      const { done, value } = await reader.read();
+      const { value, done } = await reader.read();
       if (done) break;
-      if (readerAbort) break;
 
       buffer += decoder.decode(value, { stream: true });
 
-      // split by double-newline which separates SSE events
-      const parts = buffer.split(/\n\n/);
-      // keep last part as it may be incomplete
-      buffer = parts.pop() || '';
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
 
-      for (const part of parts) {
-        // remove leading 'data:' from each line
-        const lines = part.split(/\n/).map((l) => l.replace(/^data:\s*/i, '').trim()).filter(Boolean);
-        if (lines.length === 0) continue;
-        // join lines in case of multi-line data
-        const payload = lines.join('\n');
+      for (let rawLine of lines) {
+        let line = rawLine.trim();
+        if (!line) continue;
 
-        // Some servers prefix with `data: data: {...}` — guard against double prefix
-        const normalized = payload.replace(/^data:\s*/i, '').trim();
+        // Handle double prefix: "data: data:{...}"
+        if (line.startsWith('data:')) {
+          line = line.replace(/^data:\s*/, '');
+          if (line.startsWith('data:')) {
+            line = line.replace(/^data:\s*/, '');
+          }
+        }
 
-        // Attempt to parse JSON; if fails, skip
-        let obj: any = null;
+        let event: SSEEvent;
         try {
-          obj = JSON.parse(normalized);
-        } catch (e) {
-          // If JSON not complete, append back to buffer and continue
-          // put back to front of buffer for later parsing
-          buffer = normalized + '\n' + buffer;
+          event = JSON.parse(line);
+        } catch {
+          // Incomplete JSON, keep buffering
+          buffer = line + '\n' + buffer;
           continue;
         }
 
-        if (!obj || !obj.type) continue;
-
-        switch (obj.type) {
+        switch (event.type) {
           case 'content_chunk':
-            if (typeof obj.data === 'string') {
-              state.addStreamingChunk(obj.data);
-            }
+            appendStreamingChunk(conversationId, agentMessageId, event.content);
             break;
-          case 'thinking':
-            // show thinking status non-destructively
-            useChatStore.setState({ streamingEvent: { type: 'thinking', data: obj.data, timestamp: new Date() } });
-            break;
+
           case 'completed':
-            state.endStreaming();
-            break;
           case 'done':
-            state.endStreaming();
-            // fully stop
-            abortStream();
-            break;
+            endStreaming(conversationId, agentMessageId);
+            return;
+
           case 'processing_error':
           case 'timeout_error':
           case 'network_error':
           case 'validation_error':
-            state.setStreamingError(`${obj.type}: ${obj.data ?? 'error'}`);
-            abortStream();
-            break;
+            setStreamingError(event.error);
+            return;
+
+          case 'thinking':
+          case 'status':
           default:
-            // treat other types as status
-            useChatStore.setState({ streamingEvent: { type: obj.type, data: obj.data, timestamp: new Date() } });
+            // Ignored (UI can handle later)
+            break;
         }
       }
     }
 
-    // when stream ends, ensure endStreaming called
-    state.endStreaming();
-  } catch (err: any) {
-    if (err.name === 'AbortError') {
-      // aborted by user — set a clean state
-      useChatStore.setState({ streamingEvent: null, isLoading: false });
-    } else {
-      useChatStore.getState().setStreamingError(String(err?.message ?? err));
+    endStreaming(conversationId, agentMessageId);
+  } catch (err) {
+    if ((err as Error).name === 'AbortError') {
+      return;
     }
-  } finally {
-    controller = null;
+    setStreamingError((err as Error).message);
   }
 }

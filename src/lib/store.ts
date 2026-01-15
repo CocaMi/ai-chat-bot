@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+import { create, type StateCreator } from 'zustand';
 import type {
   ChatState,
   ChatActions,
@@ -6,12 +6,15 @@ import type {
   Conversation,
   DocumentReference,
   RelatedQuestion,
-  StreamingEvent,
-} from '@/types';
+} from '@/types/chat';
+
+type Store = ChatState & ChatActions;
 
 const generateId = () => Math.random().toString(36).slice(2);
 
-export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
+const storeCreator: StateCreator<Store> = (set, get) => ({
+  /* -------------------- State -------------------- */
+
   conversations: [],
   currentConversationId: null,
   messages: [],
@@ -41,8 +44,11 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
   },
 
   selectConversation: (id: string) => {
-    const conversation = get().conversations.find((c) => c.id === id);
+    const conversation = get().conversations.find(
+      (c: Conversation) => c.id === id
+    );
     if (!conversation) return;
+
     set({
       currentConversationId: id,
       messages: conversation.messages ?? [],
@@ -51,18 +57,33 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
 
   deleteConversation: (id: string) => {
     set((state) => {
-      const conversations = state.conversations.filter((c) => c.id !== id);
+      const conversations = state.conversations.filter(
+        (c) => c.id !== id
+      );
+
       const newCurrent =
-        state.currentConversationId === id ? conversations[0]?.id ?? null : state.currentConversationId;
-      const messages = newCurrent ? conversations.find((c) => c.id === newCurrent)?.messages ?? [] : [];
-      return { conversations, currentConversationId: newCurrent, messages };
+        state.currentConversationId === id
+          ? conversations[0]?.id ?? null
+          : state.currentConversationId;
+
+      const messages = newCurrent
+        ? conversations.find((c) => c.id === newCurrent)?.messages ?? []
+        : [];
+
+      return {
+        conversations,
+        currentConversationId: newCurrent,
+        messages,
+      };
     });
   },
 
   updateConversationTitle: (id: string, title: string) => {
     set((state) => ({
       conversations: state.conversations.map((c) =>
-        c.id === id ? { ...c, title, updatedAt: new Date() } : c
+        c.id === id
+          ? { ...c, title, updatedAt: new Date() }
+          : c
       ),
     }));
   },
@@ -71,38 +92,54 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
 
   addMessage: (conversationId: string, message: Omit<Message, 'id'>) => {
     const msg: Message = {
+      ...message,
       id: generateId(),
-      content: message.content,
-      role: message.role,
-      timestamp: (message as any).timestamp ?? new Date(),
-      isStreaming: message.isStreaming,
-      isComplete: message.isComplete,
-      agentMessageId: message.agentMessageId,
-      documentReferences: message.documentReferences,
-      relatedQuestions: message.relatedQuestions,
-      metadata: message.metadata,
+      timestamp: message.timestamp ?? new Date(),
     };
 
     set((state) => {
       const conversations = state.conversations.map((c) =>
-        c.id === conversationId ? { ...c, messages: [...c.messages, msg], updatedAt: new Date() } : c
+        c.id === conversationId
+          ? {
+              ...c,
+              messages: [...c.messages, msg],
+              updatedAt: new Date(),
+            }
+          : c
       );
-      const messages = state.currentConversationId === conversationId ? [...state.messages, msg] : state.messages;
+
+      const messages =
+        state.currentConversationId === conversationId
+          ? [...state.messages, msg]
+          : state.messages;
+
       return { conversations, messages };
     });
   },
 
-  updateMessage: (conversationId: string, messageId: string, updates: Partial<Message>) => {
+  updateMessage: (
+    conversationId: string,
+    messageId: string,
+    updates: Partial<Message>
+  ) => {
     set((state) => {
       const conversations = state.conversations.map((c) =>
         c.id !== conversationId
           ? c
-          : { ...c, messages: c.messages.map((m) => (m.id === messageId ? { ...m, ...updates } : m)) }
+          : {
+              ...c,
+              messages: c.messages.map((m) =>
+                m.id === messageId ? { ...m, ...updates } : m
+              ),
+            }
       );
+
       const messages =
         state.currentConversationId === conversationId
-          ? conversations.find((c) => c.id === conversationId)?.messages ?? state.messages
+          ? conversations.find((c) => c.id === conversationId)?.messages ??
+            state.messages
           : state.messages;
+
       return { conversations, messages };
     });
   },
@@ -110,81 +147,179 @@ export const useChatStore = create<ChatState & ChatActions>((set, get) => ({
   deleteMessage: (conversationId: string, messageId: string) => {
     set((state) => {
       const conversations = state.conversations.map((c) =>
-        c.id === conversationId ? { ...c, messages: c.messages.filter((m) => m.id !== messageId), updatedAt: new Date() } : c
+        c.id === conversationId
+          ? {
+              ...c,
+              messages: c.messages.filter((m) => m.id !== messageId),
+              updatedAt: new Date(),
+            }
+          : c
       );
+
       const messages =
         state.currentConversationId === conversationId
           ? conversations.find((c) => c.id === conversationId)?.messages ?? []
           : state.messages;
+
       return { conversations, messages };
     });
   },
 
-  /* -------------------- Streaming actions -------------------- */
+  /* -------------------- Streaming (REQUIRED BY ChatActions) -------------------- */
+startStreaming: () => {
+  set({ isLoading: true });
+},
+  startAgentMessage: (conversationId: string) => {
+  const id = generateId();
 
-  startStreaming: () => {
-    set({ isLoading: true, streamingEvent: { type: 'start', timestamp: new Date() } as StreamingEvent });
-  },
+  const msg: Message = {
+    id,
+    role: 'assistant',
+    content: '',
+    timestamp: new Date(),
+    isStreaming: true,
+    isComplete: false,
+  };
 
-  addStreamingChunk: (chunk: string) => {
+  set((state) => {
+    const conversations = state.conversations.map((c) =>
+      c.id === conversationId
+        ? { ...c, messages: [...c.messages, msg], updatedAt: new Date() }
+        : c
+    );
+
+    const messages =
+      state.currentConversationId === conversationId
+        ? [...state.messages, msg]
+        : state.messages;
+
+    return {
+      conversations,
+      messages,
+      isLoading: true,
+    };
+  });
+
+  return id;
+},
+
+
+  appendStreamingChunk: (chunk: string) => {
     set((state) => {
       if (!state.messages.length) return state;
+
       const messages = [...state.messages];
       const last = messages[messages.length - 1];
+
+      if (last.role !== 'assistant' || !last.isStreaming) return state;
+
       last.content += chunk;
+
       const conversations = state.conversations.map((c) =>
         c.id === state.currentConversationId ? { ...c, messages } : c
       );
-      return { messages, conversations, streamingEvent: { type: 'chunk', data: chunk, timestamp: new Date() } as StreamingEvent };
+
+      return { messages, conversations };
     });
   },
 
   endStreaming: () => {
     set((state) => {
-      if (!state.messages.length) return { isLoading: false, streamingEvent: { type: 'end', timestamp: new Date() } as StreamingEvent };
+      if (!state.messages.length) {
+        return { isLoading: false };
+      }
+
       const messages = [...state.messages];
       const last = messages[messages.length - 1];
+      last.isStreaming = false;
       last.isComplete = true;
+
       const conversations = state.conversations.map((c) =>
         c.id === state.currentConversationId ? { ...c, messages } : c
       );
-      return { messages, conversations, isLoading: false, streamingEvent: { type: 'end', timestamp: new Date() } as StreamingEvent };
+
+      return {
+        messages,
+        conversations,
+        isLoading: false,
+      };
     });
   },
 
   setStreamingError: (error: string) => {
-    set({ isLoading: false, streamingEvent: { type: 'error', data: error, timestamp: new Date() } as StreamingEvent });
+    set({
+      isLoading: false,
+      streamingEvent: {
+        type: 'error',
+        data: error,
+        timestamp: new Date(),
+      },
+    });
   },
 
-  /* -------------------- Document / Related Questions -------------------- */
+  /* -------------------- Documents / Related Questions -------------------- */
 
-  addDocumentReference: (conversationId: string, document: DocumentReference) => {
+  addDocumentReference: (
+    conversationId: string,
+    document: DocumentReference
+  ) => {
     set((state) => {
-      let messages = state.messages;
-      if (state.currentConversationId === conversationId && messages.length) {
-        messages = messages.map((m, i) =>
-          i === messages.length - 1 ? { ...m, documentReferences: [...(m.documentReferences ?? []), document] } : m
-        );
-      }
+      if (
+        state.currentConversationId !== conversationId ||
+        !state.messages.length
+      )
+        return state;
+
+      const messages = state.messages.map((m, i) =>
+        i === state.messages.length - 1
+          ? {
+              ...m,
+              documentReferences: [
+                ...(m.documentReferences ?? []),
+                document,
+              ],
+            }
+          : m
+      );
+
       const conversations = state.conversations.map((c) =>
         c.id === conversationId ? { ...c, messages } : c
       );
+
       return { conversations, messages };
     });
   },
 
-  addRelatedQuestion: (conversationId: string, question: RelatedQuestion) => {
+  addRelatedQuestion: (
+    conversationId: string,
+    question: RelatedQuestion
+  ) => {
     set((state) => {
-      let messages = state.messages;
-      if (state.currentConversationId === conversationId && messages.length) {
-        messages = messages.map((m, i) =>
-          i === messages.length - 1 ? { ...m, relatedQuestions: [...(m.relatedQuestions ?? []), question] } : m
-        );
-      }
+      if (
+        state.currentConversationId !== conversationId ||
+        !state.messages.length
+      )
+        return state;
+
+      const messages = state.messages.map((m, i) =>
+        i === state.messages.length - 1
+          ? {
+              ...m,
+              relatedQuestions: [
+                ...(m.relatedQuestions ?? []),
+                question,
+              ],
+            }
+          : m
+      );
+
       const conversations = state.conversations.map((c) =>
         c.id === conversationId ? { ...c, messages } : c
       );
+
       return { conversations, messages };
     });
   },
-}));
+});
+
+export const useChatStore = create(storeCreator);
