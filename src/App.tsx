@@ -1,15 +1,20 @@
-import Layout from "./app/Layout";
-import { MessageList } from "./components/MessageList";
+import { VirtualizedMessageList } from '@/components/ui/virtualized-message-list';
+import ChatInput from '@/components/ChatInput';
 
-const messages = [
-  { id: "1", role: "assistant", content: "### Hello\nThis is **markdown** with a table:\n\n| A | B |\n|---|---|\n| 1 | 2 |" },
-  { id: "2", role: "user", content: "Here is some `code`:\n```js\nconsole.log('hi')\n```" }
-] as const;
-
-export default function App() {
+function App() {
   return (
-    <Layout>
-      <MessageList messages={messages} />
-    </Layout>
+    <div className="flex h-screen flex-col bg-gray-50">
+      {/* Messages area */}
+      <div className="flex-1 overflow-hidden">
+        <div className="mx-auto h-full max-w-3xl">
+          <VirtualizedMessageList />
+        </div>
+      </div>
+
+      {/* Input */}
+      <ChatInput />
+    </div>
   );
 }
+
+export default App;

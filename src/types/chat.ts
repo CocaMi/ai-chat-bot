@@ -55,6 +55,7 @@ export interface ChatActions {
   addMessage(conversationId: string, message: Omit<Message, 'id'>): void;
   updateMessage(conversationId: string, messageId: string, updates: Partial<Message>): void;
   deleteMessage(conversationId: string, messageId: string): void;
+  sendUserMessage: (content: string) => Promise<void>;
 
   /* Streaming lifecycle */
   startStreaming(): void;

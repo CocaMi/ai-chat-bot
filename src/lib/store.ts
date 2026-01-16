@@ -149,24 +149,33 @@ export const useChatStore = create<Store>((set, get) => ({
 
   /* -------------------- Send Message (API) -------------------- */
 
-  sendUserMessage: async (content: string) => {
-    const conversationId = get().currentConversationId;
-    if (!conversationId) return;
+ sendUserMessage: async (content: string) => {
+  let conversationId = get().currentConversationId;
 
-    get().addMessage(conversationId, {
-      role: 'user',
-      content,
-      timestamp: new Date(),
-      isComplete: true,
-      isStreaming: false,
-    });
+  // Ensure a conversation exists
+  if (!conversationId) {
+    conversationId = get().createConversation('New chat');
+  }
 
-    try {
-      await apiSendMessage(conversationId, content);
-    } catch (err) {
-      console.error('Failed to send message', err);
-    }
-  },
+  // Add user message immediately
+  get().addMessage(conversationId, {
+    role: 'user',
+    content,
+    timestamp: new Date(),
+    isComplete: true,
+    isStreaming: false,
+  });
+
+  // Call API (streaming will be wired later)
+  try {
+    await apiSendMessage(conversationId, content);
+  } catch (err) {
+    console.error('Failed to send message', err);
+  }
+},
+
+
+
 
   /* -------------------- Streaming (required by ChatActions) -------------------- */
 
