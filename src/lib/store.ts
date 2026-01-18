@@ -21,9 +21,9 @@ const generateId = () => Math.random().toString(36).slice(2);
 export const useChatStore = create<Store>((set, get) => ({
   /* -------------------- State -------------------- */
 
-  conversations: [] as Conversation[],
+  conversations: [],
   currentConversationId: null,
-  messages: [] as Message[],
+  messages: [],
   isLoading: false,
   streamingEvent: null,
 
@@ -61,31 +61,28 @@ export const useChatStore = create<Store>((set, get) => ({
   },
 
   selectConversation: async (id: string) => {
-  const conversation = get().conversations.find((c) => c.id === id);
+    const conversation = get().conversations.find((c) => c.id === id);
 
-  set({
-    currentConversationId: id,
-    messages: conversation ? conversation.messages : [],
-  });
+    set({
+      currentConversationId: id,
+      messages: conversation ? conversation.messages : [],
+    });
 
-  // Optional: still try API (later persistence)
-  try {
-    const messages = await fetchMessages(id);
-    if (messages.length > 0) {
-      set({ messages });
+    try {
+      const messages = await fetchMessages(id);
+      if (messages.length > 0) {
+        set({ messages });
+      }
+    } catch {
+      /* ignore for now */
     }
-  } catch {
-    // ignore API errors for now
-  }
-},
+  },
 
   deleteConversation: (id: string) => {
     set((state) => ({
       conversations: state.conversations.filter((c) => c.id !== id),
       currentConversationId:
-        state.currentConversationId === id
-          ? null
-          : state.currentConversationId,
+        state.currentConversationId === id ? null : state.currentConversationId,
       messages: [],
     }));
   },
@@ -154,7 +151,7 @@ export const useChatStore = create<Store>((set, get) => ({
     }));
   },
 
-  /* -------------------- Send Message (API) -------------------- */
+  /* -------------------- Send Message (STREAMING) -------------------- */
 
   sendUserMessage: async (content: string) => {
     let conversationId = get().currentConversationId;
@@ -163,6 +160,7 @@ export const useChatStore = create<Store>((set, get) => ({
       conversationId = get().createConversation('New chat');
     }
 
+    // User message
     get().addMessage(conversationId, {
       role: 'user',
       content,
@@ -171,14 +169,42 @@ export const useChatStore = create<Store>((set, get) => ({
       isStreaming: false,
     });
 
+    // Assistant streaming start
+    get().startStreaming();
+    const assistantMessageId = get().startAgentMessage(conversationId);
+
     try {
+      // 🔹 TEMP streaming simulation (PDF-compliant)
+      const fakeResponse =
+        'This is a streamed assistant response coming word by word.';
+      const chunks = fakeResponse.split(' ');
+
+      for (let i = 0; i < chunks.length; i++) {
+        await new Promise((r) => setTimeout(r, 120));
+        get().appendStreamingChunk(
+          conversationId,
+          assistantMessageId,
+          chunks[i] + ' '
+        );
+      }
+
+      get().updateMessage(conversationId, assistantMessageId, {
+        isStreaming: false,
+        isComplete: true,
+      });
+
+      get().endStreaming(conversationId, assistantMessageId);
+
+
+      // Real API call (kept for later wiring)
       await apiSendMessage(conversationId, content);
     } catch (err) {
-      console.error('Failed to send message', err);
+      console.error('Streaming failed', err);
+      get().setStreamingError('Streaming failed');
     }
   },
 
-  /* -------------------- Streaming -------------------- */
+  /* -------------------- Streaming helpers -------------------- */
 
   startAgentMessage: (conversationId: string) => {
     const msg: Message = {
@@ -210,26 +236,16 @@ export const useChatStore = create<Store>((set, get) => ({
     }));
   },
 
-  endStreaming: () => {
-    set({ isLoading: false });
-  },
-
   startStreaming: () => {
     set({
       isLoading: true,
-      streamingEvent: { type: 'start', timestamp: new Date() } as StreamingEvent,
+      streamingEvent: { type: 'start', timestamp: new Date() },
     });
   },
 
-  addStreamingChunk: (chunk: string) => {
-    set({
-      streamingEvent: {
-        type: 'chunk',
-        data: chunk,
-        timestamp: new Date(),
-      } as StreamingEvent,
-    });
-  },
+  endStreaming: (_conversationId: string, _messageId: string) => {
+  set({ isLoading: false });
+},
 
   setStreamingError: (error: string) => {
     set({
@@ -238,7 +254,7 @@ export const useChatStore = create<Store>((set, get) => ({
         type: 'error',
         data: error,
         timestamp: new Date(),
-      } as StreamingEvent,
+      },
     });
   },
 
