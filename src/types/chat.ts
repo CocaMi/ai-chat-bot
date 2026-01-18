@@ -46,6 +46,7 @@ export interface ChatState {
 
 export interface ChatActions {
   /* Conversations */
+  loadConversations(): Promise<void>;
   createConversation(title: string): string;
   selectConversation(id: string): void;
   deleteConversation(id: string): void;

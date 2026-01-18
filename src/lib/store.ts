@@ -11,7 +11,6 @@ import {
   fetchConversations,
   fetchMessages,
   createConversation as apiCreateConversation,
-
   sendMessage as apiSendMessage,
 } from '@/lib/api';
 
@@ -56,40 +55,48 @@ export const useChatStore = create<Store>((set, get) => ({
       messages: [],
     }));
 
-    // API call (fire-and-forget to preserve return type)
     apiCreateConversation(title).catch(console.error);
 
     return id;
   },
 
   selectConversation: async (id: string) => {
-    set({ currentConversationId: id, messages: [] });
+  const conversation = get().conversations.find((c) => c.id === id);
 
-    try {
-      const messages = await fetchMessages(id);
+  set({
+    currentConversationId: id,
+    messages: conversation ? conversation.messages : [],
+  });
+
+  // Optional: still try API (later persistence)
+  try {
+    const messages = await fetchMessages(id);
+    if (messages.length > 0) {
       set({ messages });
-    } catch (err) {
-      console.error('Failed to load messages', err);
     }
-  },
+  } catch {
+    // ignore API errors for now
+  }
+},
 
   deleteConversation: (id: string) => {
-  set((state) => ({
-    conversations: state.conversations.filter((c) => c.id !== id),
-    currentConversationId:
-      state.currentConversationId === id ? null : state.currentConversationId,
-    messages: [],
-  }));
-},
-
+    set((state) => ({
+      conversations: state.conversations.filter((c) => c.id !== id),
+      currentConversationId:
+        state.currentConversationId === id
+          ? null
+          : state.currentConversationId,
+      messages: [],
+    }));
+  },
 
   updateConversationTitle: (id: string, title: string) => {
-  set((state) => ({
-    conversations: state.conversations.map((c) =>
-      c.id === id ? { ...c, title, updatedAt: new Date() } : c
-    ),
-  }));
-},
+    set((state) => ({
+      conversations: state.conversations.map((c) =>
+        c.id === id ? { ...c, title, updatedAt: new Date() } : c
+      ),
+    }));
+  },
 
   /* -------------------- Messages -------------------- */
 
@@ -149,35 +156,29 @@ export const useChatStore = create<Store>((set, get) => ({
 
   /* -------------------- Send Message (API) -------------------- */
 
- sendUserMessage: async (content: string) => {
-  let conversationId = get().currentConversationId;
+  sendUserMessage: async (content: string) => {
+    let conversationId = get().currentConversationId;
 
-  // Ensure a conversation exists
-  if (!conversationId) {
-    conversationId = get().createConversation('New chat');
-  }
+    if (!conversationId) {
+      conversationId = get().createConversation('New chat');
+    }
 
-  // Add user message immediately
-  get().addMessage(conversationId, {
-    role: 'user',
-    content,
-    timestamp: new Date(),
-    isComplete: true,
-    isStreaming: false,
-  });
+    get().addMessage(conversationId, {
+      role: 'user',
+      content,
+      timestamp: new Date(),
+      isComplete: true,
+      isStreaming: false,
+    });
 
-  // Call API (streaming will be wired later)
-  try {
-    await apiSendMessage(conversationId, content);
-  } catch (err) {
-    console.error('Failed to send message', err);
-  }
-},
+    try {
+      await apiSendMessage(conversationId, content);
+    } catch (err) {
+      console.error('Failed to send message', err);
+    }
+  },
 
-
-
-
-  /* -------------------- Streaming (required by ChatActions) -------------------- */
+  /* -------------------- Streaming -------------------- */
 
   startAgentMessage: (conversationId: string) => {
     const msg: Message = {
@@ -241,7 +242,7 @@ export const useChatStore = create<Store>((set, get) => ({
     });
   },
 
-  /* -------------------- Compatibility (Task 5) -------------------- */
+  /* -------------------- Compatibility -------------------- */
 
   addDocumentReference: () => {},
   addRelatedQuestion: () => {},
