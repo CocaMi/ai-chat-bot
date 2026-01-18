@@ -12,17 +12,18 @@ function App() {
   }, [loadConversations]);
 
   return (
-    <div className="flex h-screen">
+    <div className="flex h-screen w-screen overflow-hidden">
       {/* Sidebar */}
       <ConversationSidebar />
 
       {/* Main chat area */}
-      <div className="flex flex-1 flex-col">
-        <div className="flex-1 overflow-hidden">
+      <main className="flex flex-1 flex-col min-w-0">
+        <section className="flex-1 overflow-y-auto overflow-x-hidden">
           <VirtualizedMessageList />
-        </div>
+        </section>
+
         <ChatInput />
-      </div>
+      </main>
     </div>
   );
 }

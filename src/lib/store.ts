@@ -4,7 +4,7 @@ import type {
   ChatActions,
   Message,
   Conversation,
-  StreamingEvent,
+  //StreamingEvent,
 } from '@/types';
 
 import {
@@ -18,6 +18,33 @@ type Store = ChatState & ChatActions;
 
 const generateId = () => Math.random().toString(36).slice(2);
 
+/* -------------------- LocalStorage helpers -------------------- */
+
+const STORAGE_KEY = 'chat-store-v1';
+
+function saveToStorage(conversations: Conversation[], currentConversationId: string | null) {
+  localStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify({ conversations, currentConversationId })
+  );
+}
+
+function loadFromStorage(): {
+  conversations: Conversation[];
+  currentConversationId: string | null;
+} | null {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) return null;
+
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+/* -------------------- Store -------------------- */
+
 export const useChatStore = create<Store>((set, get) => ({
   /* -------------------- State -------------------- */
 
@@ -30,9 +57,25 @@ export const useChatStore = create<Store>((set, get) => ({
   /* -------------------- Conversations -------------------- */
 
   loadConversations: async () => {
+    // 1️⃣ Try localStorage first
+    const cached = loadFromStorage();
+    if (cached) {
+      set({
+        conversations: cached.conversations,
+        currentConversationId: cached.currentConversationId,
+        messages:
+          cached.conversations.find(
+            (c) => c.id === cached.currentConversationId
+          )?.messages ?? [],
+      });
+      return;
+    }
+
+    // 2️⃣ Fallback to API
     try {
       const conversations = await fetchConversations();
       set({ conversations });
+      saveToStorage(conversations, null);
     } catch (err) {
       console.error('Failed to load conversations', err);
     }
@@ -49,11 +92,16 @@ export const useChatStore = create<Store>((set, get) => ({
       updatedAt: new Date(),
     };
 
-    set((state) => ({
-      conversations: [...state.conversations, conversation],
-      currentConversationId: id,
-      messages: [],
-    }));
+    set((state) => {
+      const conversations = [...state.conversations, conversation];
+      saveToStorage(conversations, id);
+
+      return {
+        conversations,
+        currentConversationId: id,
+        messages: [],
+      };
+    });
 
     apiCreateConversation(title).catch(console.error);
 
@@ -68,31 +116,45 @@ export const useChatStore = create<Store>((set, get) => ({
       messages: conversation ? conversation.messages : [],
     });
 
+    saveToStorage(get().conversations, id);
+
+    // Optional API sync
     try {
       const messages = await fetchMessages(id);
       if (messages.length > 0) {
         set({ messages });
       }
     } catch {
-      /* ignore for now */
+      /* ignore */
     }
   },
 
   deleteConversation: (id: string) => {
-    set((state) => ({
-      conversations: state.conversations.filter((c) => c.id !== id),
-      currentConversationId:
-        state.currentConversationId === id ? null : state.currentConversationId,
-      messages: [],
-    }));
+    set((state) => {
+      const conversations = state.conversations.filter((c) => c.id !== id);
+      const currentConversationId =
+        state.currentConversationId === id ? null : state.currentConversationId;
+
+      saveToStorage(conversations, currentConversationId);
+
+      return {
+        conversations,
+        currentConversationId,
+        messages: [],
+      };
+    });
   },
 
   updateConversationTitle: (id: string, title: string) => {
-    set((state) => ({
-      conversations: state.conversations.map((c) =>
+    set((state) => {
+      const conversations = state.conversations.map((c) =>
         c.id === id ? { ...c, title, updatedAt: new Date() } : c
-      ),
-    }));
+      );
+
+      saveToStorage(conversations, state.currentConversationId);
+
+      return { conversations };
+    });
   },
 
   /* -------------------- Messages -------------------- */
@@ -103,22 +165,28 @@ export const useChatStore = create<Store>((set, get) => ({
       ...message,
     };
 
-    set((state) => ({
-      conversations: state.conversations.map((c) =>
+    set((state) => {
+      const conversations = state.conversations.map((c) =>
         c.id === conversationId
           ? { ...c, messages: [...c.messages, msg] }
           : c
-      ),
-      messages:
-        state.currentConversationId === conversationId
-          ? [...state.messages, msg]
-          : state.messages,
-    }));
+      );
+
+      saveToStorage(conversations, state.currentConversationId);
+
+      return {
+        conversations,
+        messages:
+          state.currentConversationId === conversationId
+            ? [...state.messages, msg]
+            : state.messages,
+      };
+    });
   },
 
   updateMessage: (conversationId, messageId, updates) => {
-    set((state) => ({
-      conversations: state.conversations.map((c) =>
+    set((state) => {
+      const conversations = state.conversations.map((c) =>
         c.id !== conversationId
           ? c
           : {
@@ -127,31 +195,43 @@ export const useChatStore = create<Store>((set, get) => ({
                 m.id === messageId ? { ...m, ...updates } : m
               ),
             }
-      ),
-      messages:
-        state.currentConversationId === conversationId
-          ? state.messages.map((m) =>
-              m.id === messageId ? { ...m, ...updates } : m
-            )
-          : state.messages,
-    }));
+      );
+
+      saveToStorage(conversations, state.currentConversationId);
+
+      return {
+        conversations,
+        messages:
+          state.currentConversationId === conversationId
+            ? state.messages.map((m) =>
+                m.id === messageId ? { ...m, ...updates } : m
+              )
+            : state.messages,
+      };
+    });
   },
 
   deleteMessage: (conversationId, messageId) => {
-    set((state) => ({
-      conversations: state.conversations.map((c) =>
+    set((state) => {
+      const conversations = state.conversations.map((c) =>
         c.id === conversationId
           ? { ...c, messages: c.messages.filter((m) => m.id !== messageId) }
           : c
-      ),
-      messages:
-        state.currentConversationId === conversationId
-          ? state.messages.filter((m) => m.id !== messageId)
-          : state.messages,
-    }));
+      );
+
+      saveToStorage(conversations, state.currentConversationId);
+
+      return {
+        conversations,
+        messages:
+          state.currentConversationId === conversationId
+            ? state.messages.filter((m) => m.id !== messageId)
+            : state.messages,
+      };
+    });
   },
 
-  /* -------------------- Send Message (STREAMING) -------------------- */
+  /* -------------------- Send Message (Streaming) -------------------- */
 
   sendUserMessage: async (content: string) => {
     let conversationId = get().currentConversationId;
@@ -160,7 +240,15 @@ export const useChatStore = create<Store>((set, get) => ({
       conversationId = get().createConversation('New chat');
     }
 
-    // User message
+    // Auto-title (PDF A)
+    const convo = get().conversations.find((c) => c.id === conversationId);
+    if (convo && convo.messages.length === 0) {
+      get().updateConversationTitle(
+        conversationId,
+        content.slice(0, 40)
+      );
+    }
+
     get().addMessage(conversationId, {
       role: 'user',
       content,
@@ -169,23 +257,15 @@ export const useChatStore = create<Store>((set, get) => ({
       isStreaming: false,
     });
 
-    // Assistant streaming start
     get().startStreaming();
     const assistantMessageId = get().startAgentMessage(conversationId);
 
     try {
-      // 🔹 TEMP streaming simulation (PDF-compliant)
-      const fakeResponse =
-        'This is a streamed assistant response coming word by word.';
-      const chunks = fakeResponse.split(' ');
-
-      for (let i = 0; i < chunks.length; i++) {
+      // Fake streaming (PDF-compliant)
+      const fake = 'This is a streamed assistant response.';
+      for (const word of fake.split(' ')) {
         await new Promise((r) => setTimeout(r, 120));
-        get().appendStreamingChunk(
-          conversationId,
-          assistantMessageId,
-          chunks[i] + ' '
-        );
+        get().appendStreamingChunk(conversationId, assistantMessageId, word + ' ');
       }
 
       get().updateMessage(conversationId, assistantMessageId, {
@@ -195,8 +275,6 @@ export const useChatStore = create<Store>((set, get) => ({
 
       get().endStreaming(conversationId, assistantMessageId);
 
-
-      // Real API call (kept for later wiring)
       await apiSendMessage(conversationId, content);
     } catch (err) {
       console.error('Streaming failed', err);
@@ -216,14 +294,20 @@ export const useChatStore = create<Store>((set, get) => ({
       isComplete: false,
     };
 
-    set((state) => ({
-      messages: [...state.messages, msg],
-      conversations: state.conversations.map((c) =>
+    set((state) => {
+      const conversations = state.conversations.map((c) =>
         c.id === conversationId
           ? { ...c, messages: [...c.messages, msg] }
           : c
-      ),
-    }));
+      );
+
+      saveToStorage(conversations, state.currentConversationId);
+
+      return {
+        conversations,
+        messages: [...state.messages, msg],
+      };
+    });
 
     return msg.id;
   },
@@ -243,9 +327,9 @@ export const useChatStore = create<Store>((set, get) => ({
     });
   },
 
-  endStreaming: (_conversationId: string, _messageId: string) => {
-  set({ isLoading: false });
-},
+  endStreaming: () => {
+    set({ isLoading: false });
+  },
 
   setStreamingError: (error: string) => {
     set({
