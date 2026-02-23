@@ -327,7 +327,7 @@ export const useChatStore = create<Store>((set, get) => ({
     });
   },
 
-  endStreaming: () => {
+  endStreaming: (conversationId?: string, messageId?: string) => {
     set({ isLoading: false });
   },
 
